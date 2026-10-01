@@ -11,24 +11,24 @@ from agents.lookup_agent import create_lookup_agent, create_lookup_task  # noqa:
 from agents.reply_agent import create_reply_agent, create_reply_task  # noqa: E402
 from agents.review_agent import create_review_agent, create_review_task, parse_decision  # noqa: E402
 from llm import GROQ_BASE_URL, get_llm  # noqa: E402
-from tools.shop_data_tool import load_shop  # noqa: E402
+from tools.shop_data_tool import build_lookup_tool  # noqa: E402
 
 OWNER_HOLD_MESSAGE = (
     "Thanks for your message! I've passed this to the shop owner, who will get back to you personally very soon."
 )
 
 
-def answer_customer(message: str, history: str, api_key: str, base_url: str = GROQ_BASE_URL) -> dict:
-    """Runs the 3 agents. Returns facts, draft reply, needs_owner, reason, customer_text."""
-    shop = load_shop()
+def answer_customer(message: str, history: str, api_key: str, shop: dict, examples: str = "", base_url: str = GROQ_BASE_URL) -> dict:
+    """Runs the 3 agents on ONE shop's data. Returns facts, draft reply, needs_owner, reason, customer_text."""
     llm = get_llm(api_key, base_url)
+    lookup_tool = build_lookup_tool(shop)
 
-    lookup_agent = create_lookup_agent(llm)
+    lookup_agent = create_lookup_agent(llm, lookup_tool)
     reply_agent = create_reply_agent(llm, shop["shop_name"])
     review_agent = create_review_agent(llm)
 
     lookup_task = create_lookup_task(lookup_agent, message, history)
-    reply_task = create_reply_task(reply_agent, message, history, lookup_task, shop["owner_contact"])
+    reply_task = create_reply_task(reply_agent, message, history, lookup_task, shop["owner_contact"], examples)
     review_task = create_review_task(review_agent, message, lookup_task, reply_task)
 
     crew = Crew(
