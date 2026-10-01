@@ -18,12 +18,20 @@ def create_reply_agent(llm, shop_name: str) -> Agent:
     )
 
 
-def create_reply_task(agent: Agent, message: str, history: str, lookup_task: Task, owner_contact: str) -> Task:
+def create_reply_task(agent: Agent, message: str, history: str, lookup_task: Task, owner_contact: str, examples: str = "") -> Task:
+    style_block = ""
+    if examples:
+        style_block = (
+            "\nPast replies the shop owner approved (copy their TONE and wording style only; "
+            "facts must still come ONLY from the previous task):\n"
+            f"{examples}\n"
+        )
     return Task(
         description=(
             "Recent conversation (may be empty):\n"
             f"{history}\n\n"
-            f"Customer's latest message: {message}\n\n"
+            f"Customer's latest message: {message}\n"
+            f"{style_block}\n"
             "Write the reply using ONLY the facts from the previous task. Rules:\n"
             "- Maximum 3 short sentences, friendly tone, at most one emoji.\n"
             "- Quote prices with the currency exactly as given.\n"
