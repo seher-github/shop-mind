@@ -1,10 +1,8 @@
 """Agent 1: finds the facts in the shop's data. It never writes to the customer."""
 from crewai import Agent, Task
 
-from tools.shop_data_tool import shop_data_lookup
 
-
-def create_lookup_agent(llm) -> Agent:
+def create_lookup_agent(llm, lookup_tool) -> Agent:
     return Agent(
         role="Shop Data Specialist",
         goal="Find the exact product and policy facts needed to answer a customer's question.",
@@ -12,7 +10,7 @@ def create_lookup_agent(llm) -> Agent:
             "You work in a small clothing shop. You only trust the shop's data lookup tool, "
             "never your own memory, and you never guess prices, sizes, stock or policies."
         ),
-        tools=[shop_data_lookup],
+        tools=[lookup_tool],
         llm=llm,
         allow_delegation=False,
         verbose=False,
