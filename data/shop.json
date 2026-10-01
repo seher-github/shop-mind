@@ -1,0 +1,54 @@
+{
+  "shop_name": "Urban Thread",
+  "currency": "USD",
+  "owner_contact": "owner@urbanthread.example",
+  "products": [
+    {
+      "name": "Classic Denim Jacket",
+      "category": "jackets",
+      "price": 59.99,
+      "colors": ["blue", "black"],
+      "stock": {"S": 4, "M": 0, "L": 6, "XL": 2},
+      "notes": "Regular fit, 100% cotton denim."
+    },
+    {
+      "name": "Cozy Hoodie",
+      "category": "hoodies",
+      "price": 39.50,
+      "colors": ["grey", "navy", "maroon"],
+      "stock": {"S": 10, "M": 8, "L": 3, "XL": 0},
+      "notes": "Fleece lined, relaxed fit."
+    },
+    {
+      "name": "Slim Fit Chinos",
+      "category": "trousers",
+      "price": 44.00,
+      "colors": ["beige", "olive"],
+      "stock": {"30": 5, "32": 7, "34": 0, "36": 2},
+      "notes": "Waist sizes in inches. Stretch cotton."
+    },
+    {
+      "name": "Everyday T-Shirt",
+      "category": "t-shirts",
+      "price": 14.99,
+      "colors": ["white", "black", "red"],
+      "stock": {"S": 20, "M": 25, "L": 18, "XL": 9},
+      "notes": "Pack of 3 available for 39.99."
+    },
+    {
+      "name": "Floral Summer Dress",
+      "category": "dresses",
+      "price": 49.00,
+      "colors": ["yellow", "pink"],
+      "stock": {"XS": 2, "S": 5, "M": 4, "L": 0},
+      "notes": "Lightweight viscose, knee length."
+    }
+  ],
+  "policies": {
+    "delivery": "Standard delivery takes 3-5 working days and costs 4.00. Free delivery on orders over 60.00. Express delivery (1-2 working days) costs 9.00. We do not ship internationally yet.",
+    "returns": "Unworn items with tags can be returned within 14 days of delivery for a refund to the original payment method. Sale items are final sale. Customer pays return shipping unless the item is faulty.",
+    "exchange": "Size or colour exchanges are free within 14 days if the new item is in stock. Contact the shop to arrange it.",
+    "payment": "We accept credit/debit cards and cash on delivery for orders under 100.00.",
+    "hours": "The shop is open Monday to Saturday, 10:00 to 19:00. Closed on Sundays."
+  }
+}
