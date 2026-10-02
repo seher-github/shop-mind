@@ -28,7 +28,7 @@ GENERIC_WORDS = {
 # Words that point to common policy topics (used when a topic name matches one of these).
 SYNONYMS = {
     "delivery": {"deliver", "delivery", "shipping", "ship", "shipped", "arrive", "courier", "day", "express", "international"},
-    "return": {"return", "refund"},
+        "return": {"return", "refund", "exchange", "swap"},
     "exchange": {"exchange", "swap", "change", "different", "replace"},
     "payment": {"pay", "payment", "cash", "card", "cod", "credit", "debit"},
     "hour": {"open", "close", "closed", "hour", "time", "sunday", "saturday", "monday"},
@@ -105,6 +105,12 @@ def _policy_keys(topic: str) -> set:
     return keys
 
 
+def _split_label(label: str):
+    """'delivery (Islamabad)' -> ('delivery', 'Islamabad'); 'hours' -> ('hours', '')."""
+    m = re.match(r"^(.*?)\s*\((.*)\)\s*$", label)
+    return (m.group(1), m.group(2)) if m else (label, "")
+
+
 def search_shop_data(query: str, shop: dict) -> str:
     tokens = _tokens(query)
     currency = shop.get("currency", "")
@@ -124,11 +130,19 @@ def search_shop_data(query: str, shop: dict) -> str:
     for _, p in scored[:3]:
         results.append(_format_product(p, currency))
 
-    matched_policy = False
-    for topic, text in policies.items():
-        if tokens & _policy_keys(topic):
-            results.append(f"POLICY ({topic}): {text}")
-            matched_policy = True
+    # Policies are grouped by topic ("delivery", "returns"...). Inside a matching topic we keep the rows
+    # whose scope the customer mentioned ("delivery to Islamabad" -> only the Islamabad row).
+    # If no scope was mentioned, every row of that topic is kept.
+    groups = {}
+    for label, text in policies.items():
+        base, scope = _split_label(label)
+        if tokens & _policy_keys(base):
+            groups.setdefault(base, []).append((label, scope, text))
+    for rows in groups.values():
+        scored = [(len(tokens & _tokens(scope)) if scope else 0, label, text) for label, scope, text in rows]
+        best = max(s[0] for s in scored)
+        for _, label, text in [s for s in scored if s[0] == best][:5]:
+            results.append(f"POLICY ({label}): {text}")
 
     # Fallback: look inside the policy texts.
     if not results and policies:
@@ -145,6 +159,9 @@ def search_shop_data(query: str, shop: dict) -> str:
             f"Policy topics available: {', '.join(policies) or 'none'}."
         )
     return "\n".join(results)
+
+
+
 
 
 def build_lookup_tool(shop: dict):
