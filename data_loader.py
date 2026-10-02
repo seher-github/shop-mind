@@ -176,12 +176,21 @@ def parse_products(df: pd.DataFrame, mapping: dict):
 
 
 # ---------- policies ----------
+def _is_id(col) -> bool:
+    n = _norm(col)
+    return n == "id" or n.endswith("_id") or n in ("sr", "sr_no", "s_no", "sno", "no", "index")
+
+
 def parse_policies(df: pd.DataFrame) -> dict:
+    """Turns a policies table into {label: text}. A 'scope'-style column (city, collection...) is added to the label,
+    e.g. 'delivery (Islamabad)'. ID columns are ignored."""
     if df.empty:
         return {}
-    cols = list(df.columns)
+    cols = [c for c in df.columns if not _is_id(c)] or list(df.columns)
     topic_c = guess_column(cols, TOPIC_ALIASES)
-    text_c = guess_column([x for x in cols if x != topic_c], TEXT_ALIASES)
+    rest = [x for x in cols if x != topic_c]
+    text_c = guess_column(rest, TEXT_ALIASES)
+    qual_c = guess_column([x for x in rest if x != text_c], QUALIFIER_ALIASES)
     policies = {}
 
     def add(topic, text):
@@ -191,7 +200,11 @@ def parse_policies(df: pd.DataFrame) -> dict:
 
     if topic_c and text_c:
         for _, r in df.iterrows():
-            add(r[topic_c], r[text_c])
+            topic = str(r[topic_c]).strip()
+            qualifier = str(r[qual_c]).strip() if qual_c else ""
+            if qualifier and qualifier.lower() not in GENERIC_SCOPES:
+                topic = f"{topic} ({qualifier})"
+            add(topic, r[text_c])
     elif len(df) <= 3 and len(cols) >= 3:       # wide layout: each column is a topic
         for col in cols:
             add(col, " ".join(v for v in df[col].astype(str) if v.strip()))
@@ -202,7 +215,6 @@ def parse_policies(df: pd.DataFrame) -> dict:
         for i, v in enumerate(df[cols[0]], start=1):
             add(f"policy {i}", v)
     return policies
-
 
 # ---------- owner corrections ----------
 def parse_corrections(df: pd.DataFrame):
