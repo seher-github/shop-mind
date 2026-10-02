@@ -24,7 +24,9 @@ PRODUCT_LABELS = {
     "color": "Colour", "size": "Size", "stock": "Stock / quantity", "notes": "Description / notes",
 }
 TOPIC_ALIASES = ["policy_name", "policy_type", "policy", "topic", "title", "name", "category", "section", "type"]
-TEXT_ALIASES = ["policy_text", "policy_details", "details", "description", "text", "content", "answer", "rule", "terms", "info", "summary"]
+TEXT_ALIASES = ["policy_text", "policy_details", "policy_detail", "details", "detail", "description", "text", "content", "answer", "rule", "terms", "info", "summary"]
+QUALIFIER_ALIASES = ["scope", "applies_to", "applicable_to", "city", "region", "location", "collection", "applies"]
+GENERIC_SCOPES = {"general", "all", "all orders", "all items", "all products", "everything", "any"}
 Q_ALIASES = ["customer_message", "customer_question", "customer_query", "question", "message", "query", "customer", "input", "user_message"]
 R_ALIASES = [
     "owner_reply", "owner_correction", "owner_edit", "owner_edited_reply", "corrected_reply", "corrected_response",
