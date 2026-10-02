@@ -29,11 +29,11 @@ def run_batch(questions, run_one, progress=None, delay=1.0):
     for i, q in enumerate(questions, start=1):
         try:
             r = run_one(q)
-                        rows.append({"Question": q, "Route": "Owner" if r["needs_owner"] else "Auto-sent",
+            rows.append({"Question": q, "Route": "Owner" if r["needs_owner"] else "Auto-sent",
                          "Draft reply": r["reply"], "Why": r["reason"], "Facts found": r["facts"]})
         except Exception as e:  # noqa: BLE001
             msg = str(e)
-                       rows.append({"Question": q, "Route": "Error", "Draft reply": "", "Why": msg[:120], "Facts found": ""})
+            rows.append({"Question": q, "Route": "Error", "Draft reply": "", "Why": msg[:120], "Facts found": ""})
             if "429" in msg or "rate" in msg.lower():
                 break
         if progress:
