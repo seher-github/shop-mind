@@ -1,5 +1,12 @@
-"""Agent 2: writes the customer-facing reply using ONLY the facts found by Agent 1."""
+"""Agent 3: Customer Reply Agent. Drafts the reply in the customer's language using ONLY the facts."""
 from crewai import Agent, Task
+
+LANGUAGE_RULE = {
+    "english": "English",
+    "roman_urdu": "Roman Urdu (Urdu written in English letters), the way the customer writes",
+    "urdu": "Urdu",
+    "mixed": "the same mix of English and Roman Urdu that the customer used",
+}
 
 
 def create_reply_agent(llm, shop_name: str) -> Agent:
@@ -18,21 +25,23 @@ def create_reply_agent(llm, shop_name: str) -> Agent:
     )
 
 
-def create_reply_task(agent: Agent, message: str, history: str, lookup_task: Task, owner_contact: str, examples: str = "") -> Task:
+def create_reply_task(agent: Agent, message: str, language: str, history: str, faq_task: Task,
+                      owner_contact: str, examples: str = "") -> Task:
     style_block = ""
     if examples:
         style_block = (
-            "\nPast replies the shop owner approved (copy their TONE and wording style only; "
+            "\nSimilar past replies the shop owner wrote or approved (copy their TONE and wording style only; "
             "facts must still come ONLY from the previous task):\n"
             f"{examples}\n"
         )
+    lang = LANGUAGE_RULE.get(language, "the same language the customer wrote in")
     return Task(
         description=(
             "Recent conversation (may be empty):\n"
             f"{history}\n\n"
             f"Customer's latest message: {message}\n"
             f"{style_block}\n"
-            "Write the reply using ONLY the facts from the previous task. Rules:\n"
+            f"Write the reply in {lang}. Use ONLY the facts from the previous task. Rules:\n"
             "- Maximum 3 short sentences, friendly tone, at most one emoji.\n"
             "- Quote prices with the currency exactly as given.\n"
             "- If a size is out of stock, say so and suggest an available size if there is one.\n"
@@ -42,5 +51,5 @@ def create_reply_task(agent: Agent, message: str, history: str, lookup_task: Tas
         ),
         expected_output="Only the text of the reply to the customer. No labels, no quotes, no explanations.",
         agent=agent,
-        context=[lookup_task],
+        context=[faq_task],
     )
