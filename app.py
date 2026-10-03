@@ -1,4 +1,6 @@
-"""ShopMind - Streamlit app: chat, owner inbox, test lab, and bring-your-own-data upload."""
+"""ShopMind - Streamlit app: chat, owner inbox, insights, test lab, and bring-your-own-data upload."""
+import hashlib
+import json
 import os
 
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
@@ -9,23 +11,32 @@ import streamlit as st  # noqa: E402
 
 from data_loader import (  # noqa: E402
     PRODUCT_FIELDS, PRODUCT_LABELS, auto_mapping, build_shop, corrections_to_csv, parse_corrections,
-    parse_policies, parse_products, pick_examples, read_upload, template_files,
+    parse_policies, parse_products, read_upload, template_files,
 )
+from insights import mark_action, new_entry, render_insights  # noqa: E402
+from retriever import HybridIndex  # noqa: E402
 from shopmind_crew import answer_customer  # noqa: E402
 from test_lab import render_test_lab  # noqa: E402
 from tools.shop_data_tool import load_demo_shop  # noqa: E402
-from ui_styles import APP_CSS, hero_html, stats_html, steps_html  # noqa: E402
+from ui_components import EXTRA_CSS, hero_html, pipeline_html, route_badge  # noqa: E402
+from ui_styles import APP_CSS, stats_html  # noqa: E402
 
 st.set_page_config(page_title="ShopMind", page_icon="🧵", layout="wide")
-st.markdown(f"<style>{APP_CSS}</style>", unsafe_allow_html=True)
+st.markdown(f"<style>{APP_CSS}{EXTRA_CSS}</style>", unsafe_allow_html=True)
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
-PAGES = ["💬 Chat", "📥 Owner inbox", "🧪 Test lab", "📦 Shop data"]
+PAGES = ["💬 Chat", "📥 Owner inbox", "📊 Insights", "🧪 Test lab", "📦 Shop data"]
 
 # ---------- session state ----------
-for key, default in [("messages", []), ("inbox", []), ("learned", []), ("next_id", 1), ("data_sig", None)]:
+for key, default in [("messages", []), ("inbox", []), ("learned", []), ("log", []), ("next_id", 1),
+                     ("data_sig", None), ("index_sig", None), ("flash", None)]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+
+def reset_conversation():
+    st.session_state.messages, st.session_state.inbox = [], []
+    st.session_state.learned, st.session_state.log = [], []
 
 
 def get_api_key() -> str:
@@ -95,8 +106,9 @@ with st.sidebar:
 
     st.divider()
     api_key = get_api_key()
-    if st.button("🧹 Clear chat & inbox", width="stretch"):
-        st.session_state.messages, st.session_state.inbox, st.session_state.learned = [], [], []
+    if st.button("🧹 Clear chat, inbox & log", width="stretch"):
+        reset_conversation()
+        st.session_state.index_sig = None  # rebuild the index without the learned replies
         st.rerun()
 
 # ---------- decide which data is active ----------
@@ -133,13 +145,26 @@ data_sig = (mode, source_label, getattr(f_products, "name", None), getattr(f_pro
             getattr(f_policies, "name", None), getattr(f_corr, "name", None))
 if st.session_state.data_sig != data_sig:
     st.session_state.data_sig = data_sig
-    st.session_state.messages, st.session_state.inbox, st.session_state.learned = [], [], []
+    reset_conversation()
 
-pool = corrections + st.session_state.learned
+# (Re)build the search index when the shop data changes.
+index_sig = hashlib.md5(json.dumps([shop, corrections], sort_keys=True, default=str).encode()).hexdigest()
+if st.session_state.index_sig != index_sig or "index" not in st.session_state:
+    old = st.session_state.get("index")
+    if old is not None:
+        old.close()
+    with st.spinner("Indexing the shop data..."):
+        new_index = HybridIndex(shop, corrections)
+        for c in st.session_state.learned:          # keep what the owner taught us this session
+            new_index.add_correction(c["question"], c["reply"])
+    st.session_state.index = new_index
+    st.session_state.index_sig = index_sig
+index = st.session_state.index
+pool_size = len(corrections) + len(st.session_state.learned)
 
 
 def run_one(question: str, history: str = "") -> dict:
-    return answer_customer(question, history, api_key, shop, pick_examples(pool, question))
+    return answer_customer(question, history, api_key, index)
 
 
 # ---------- header ----------
@@ -150,13 +175,16 @@ for n in notices:
     st.warning(n)
 st.markdown(
     stats_html([
-        ("🛍️", len(shop["products"]), "Products loaded"),
-        ("📜", len(shop["policies"]), "Policies loaded"),
-        ("🎓", len(pool), "Owner examples"),
+        ("🛍️", len(shop["products"]), "Products indexed"),
+        ("📜", len(shop["policies"]), "Policy rows"),
+        ("🎓", pool_size, "Owner examples"),
         ("📥", len(st.session_state.inbox), "Waiting for owner"),
     ]),
     unsafe_allow_html=True,
 )
+if st.session_state.flash:
+    st.toast(st.session_state.flash)
+    st.session_state.flash = None
 
 page = st.segmented_control("Navigate", PAGES, default=PAGES[0], label_visibility="collapsed", key="nav") or PAGES[0]
 
@@ -165,14 +193,22 @@ page = st.segmented_control("Navigate", PAGES, default=PAGES[0], label_visibilit
 def send_owner_reply(item_id: int):
     item = next(i for i in st.session_state.inbox if i["id"] == item_id)
     text = st.session_state.get(f"draft_{item_id}", item["draft"]).strip()
-    if text:
-        st.session_state.messages.append({"role": "assistant", "content": text, "meta": {"by": "owner"}})
-        if text != item["draft"].strip():  # the owner edited it -> learn from it
-            st.session_state.learned.append({"question": item["question"], "reply": text})
+    if not text:
+        st.session_state.flash = "Write a reply first, then press Send."
+        return
+    st.session_state.messages.append({"role": "assistant", "content": text, "meta": {"by": "owner"}})
+    if text != item["draft"].strip():      # the owner wrote or edited it -> the learning loop
+        st.session_state.learned.append({"question": item["question"], "reply": text})
+        st.session_state.index.add_correction(item["question"], text)
+        mark_action(st.session_state.log, item["log_id"], "edited (learned)")
+    else:
+        mark_action(st.session_state.log, item["log_id"], "approved as drafted")
     st.session_state.inbox = [i for i in st.session_state.inbox if i["id"] != item_id]
 
 
 def dismiss(item_id: int):
+    item = next(i for i in st.session_state.inbox if i["id"] == item_id)
+    mark_action(st.session_state.log, item["log_id"], "dismissed")
     st.session_state.inbox = [i for i in st.session_state.inbox if i["id"] != item_id]
 
 
@@ -183,10 +219,10 @@ def queue_prompt(text: str):
 # ---------- pages ----------
 if page == PAGES[0]:
     if not st.session_state.messages:
-        st.markdown('<div class="welcome">👋 Ask anything a customer would ask - or tap a question to start.</div>',
+        st.markdown('<div class="welcome">👋 Ask anything a customer would ask, in English or Roman Urdu - or tap a question to start.</div>',
                     unsafe_allow_html=True)
         first = shop["products"][0]["name"]
-        samples = [f"How much is the {first}?", "What is your return policy?", "How long does delivery take?", "Do you have anything in size M?"]
+        samples = [f"How much is the {first}?", "Kya aap Islamabad deliver karte hain?", "What is your return policy?", "My order arrived damaged"]
         cols = st.columns(len(samples))
         for col, s in zip(cols, samples):
             col.button(s, key=f"chip_{s}", on_click=queue_prompt, args=(s,), width="stretch")
@@ -197,12 +233,14 @@ if page == PAGES[0]:
             meta = m.get("meta", {})
             if meta.get("by") == "owner":
                 st.caption("✍️ Sent by the shop owner")
-            elif meta.get("reason"):
+            elif meta.get("route"):
                 with st.expander("Behind the scenes"):
-                    st.markdown(steps_html(meta["needs_owner"]), unsafe_allow_html=True)
-                    st.markdown(f"**Facts found:**\n\n{meta['facts']}")
-                    st.markdown(f"**Draft reply:** {meta['reply']}")
-                    st.markdown(f"**Review:** {meta['reason']}")
+                    st.markdown(pipeline_html(meta), unsafe_allow_html=True)
+                    if meta.get("retrieved"):
+                        st.markdown(f"**Retrieved data:**\n\n{meta['retrieved']}")
+                    if meta.get("reply"):
+                        st.markdown(f"**Draft reply:** {meta['reply']}")
+                    st.markdown(f"**Decision:** {meta['reason']}  \n*Took {meta['seconds']}s*")
 
     prompt = st.chat_input("Ask about prices, sizes, stock, delivery, returns...")
     if not prompt and st.session_state.get("queued"):
@@ -216,7 +254,7 @@ if page == PAGES[0]:
         with st.chat_message("user", avatar="🛍️"):
             st.write(prompt)
         with st.chat_message("assistant", avatar="🧵"):
-            with st.spinner("The agents are checking the shop data..."):
+            with st.spinner("The agents are working on it..."):
                 try:
                     result = run_one(prompt, history)
                 except Exception as e:  # noqa: BLE001  keep the app alive on any error
@@ -228,11 +266,14 @@ if page == PAGES[0]:
                     st.session_state.messages.pop()
                     st.stop()
             st.write(result["customer_text"])
-        if result["needs_owner"]:
-            st.session_state.inbox.append(
-                {"id": st.session_state.next_id, "question": prompt, "draft": result["reply"], "reason": result["reason"]}
-            )
-            st.session_state.next_id += 1
+        entry_id = st.session_state.next_id
+        st.session_state.next_id += 1
+        st.session_state.log.append(new_entry(entry_id, prompt, result))
+        if result["route"] != "auto":
+            st.session_state.inbox.append({"id": entry_id, "log_id": entry_id, "question": prompt, "draft": result["reply"],
+                                           "reason": result["reason"], "route": result["route"]})
+            st.session_state.flash = ("🚨 Owner notified: this message needs you." if result["route"] == "escalate"
+                                      else "📝 Sent to the owner for review.")
         st.session_state.messages.append({"role": "assistant", "content": result["customer_text"], "meta": result})
         st.rerun()
 
@@ -242,18 +283,27 @@ elif page == PAGES[1]:
         st.info("Nothing waiting. Messages that need you will appear here.")
     for item in st.session_state.inbox:
         with st.container(border=True):
+            st.markdown(route_badge(item["route"]), unsafe_allow_html=True)
             st.markdown(f"**Customer asked:** {item['question']}")
             st.caption(f"Why it needs you: {item['reason']}")
-            st.text_area("Edit the draft reply, then send", value=item["draft"], key=f"draft_{item['id']}")
+            if item["route"] == "escalate":
+                st.warning("Sensitive message: no reply was drafted or sent automatically. Please write one yourself.")
+            st.text_area("Your reply to the customer" if item["route"] == "escalate" else "Edit the draft reply, then send",
+                         value=item["draft"], key=f"draft_{item['id']}",
+                         placeholder="Write your reply here...")
             c1, c2 = st.columns(2)
             c1.button("Send reply", key=f"send_{item['id']}", type="primary", on_click=send_owner_reply, args=(item["id"],))
             c2.button("Dismiss", key=f"dismiss_{item['id']}", on_click=dismiss, args=(item["id"],))
     if st.session_state.learned:
-        st.success(f"🎓 ShopMind has learned from {len(st.session_state.learned)} reply edit(s) you made this session.")
+        st.success(f"🎓 ShopMind has learned from {len(st.session_state.learned)} of your replies this session "
+                   "and will use them as style examples for similar questions.")
         st.download_button("⬇ Download learned replies (CSV)", corrections_to_csv(st.session_state.learned),
                            "owner_corrections_learned.csv", "text/csv")
 
 elif page == PAGES[2]:
+    render_insights(st.session_state.log, len(st.session_state.learned), len(corrections))
+
+elif page == PAGES[3]:
     render_test_lab(run_one, api_key)
 
 else:
@@ -275,11 +325,25 @@ else:
                 st.markdown(f"**{topic}** - {text}")
         else:
             st.write("No policies loaded. The assistant will pass policy questions to the owner.")
-    with st.expander(f"🎓 Owner examples ({len(pool)})"):
-        for c in pool[:10]:
+    with st.expander(f"🎓 Owner examples ({pool_size})"):
+        for c in (corrections + st.session_state.learned)[:10]:
             st.markdown(f"**Customer:** {c['question']}  \n**Owner:** {c['reply']}")
-        if not pool:
+        if not pool_size:
             st.write("None yet. Upload a corrections file, or edit drafts in the Owner inbox and ShopMind will learn.")
+
+    st.markdown("##### 🔍 Try the retriever (uses no AI quota)")
+    q = st.text_input("Type a search query, e.g. 'hoodie price' or 'delivery islamabad'")
+    if q:
+        r = index.search(q, "")
+        st.markdown(f"**Confidence:** {r['confidence']}")
+        if r["products"]:
+            st.markdown("**Products:** " + ", ".join(f"{p['name']} ({p['via']})" for p in r["products"]))
+        if r["policies"]:
+            st.markdown("**Policies:** " + ", ".join(f"{p['label']} ({p['via']})" for p in r["policies"]))
+        if r["corrections"]:
+            st.markdown("**Similar owner replies:** " + " | ".join(f"{c['question']} → {c['reply']}" for c in r["corrections"]))
+        st.code(r["facts_text"])
+
     st.markdown("##### 📄 Not sure how your CSV should look? Download a template")
     cols = st.columns(4)
     for col, (fname, content) in zip(cols, template_files().items()):
